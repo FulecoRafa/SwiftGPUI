@@ -40,6 +40,20 @@ public struct Interpreter {
         return result
     }
 
+    /// Traverses the tree and returns all nodes that carry an Interaction,
+    /// with their absolute frames. The platform renderer uses this to
+    /// overlay native controls (e.g. TextFields) on top of the canvas.
+    public func collectInteractions(_ node: LayoutNode) -> [(Rect, Interaction)] {
+        var result: [(Rect, Interaction)] = []
+        if let interaction = node.interaction {
+            result.append((node.frame, interaction))
+        }
+        for child in node.children {
+            result.append(contentsOf: collectInteractions(child))
+        }
+        return result
+    }
+
     /// Conveniência: layout + collect em uma chamada.
     public func interpret(
         view: any View,

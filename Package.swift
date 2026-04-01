@@ -150,7 +150,7 @@ let package = Package(
         ),
         .testTarget(
             name: "GPUIInterpretTests",
-            dependencies: ["GPUIInterpret"],
+            dependencies: ["GPUIInterpret", "SwiftGPUI"],
             path: "Tests/GPUIInterpretTests"
         ),
     ]

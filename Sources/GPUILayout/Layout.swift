@@ -5,19 +5,48 @@ import GPUIDraw
 // Resultado do cálculo de layout: frame absoluto na janela
 // e o comando de renderização associado a esse nó.
 
-public struct LayoutNode: Sendable {
+// MARK: - Interaction
+//
+// Carried alongside a LayoutNode for components that need platform-side
+// event handling (e.g. text input). The platform renderer reads this and
+// creates a native interactive control positioned over the drawn frame.
+
+public enum Interaction: @unchecked Sendable {
+    case textInput(binding: GPUIBinding<String>, placeholder: String)
+    case tap(() -> Void)
+}
+
+// MARK: - LayoutNode
+
+public struct LayoutNode: @unchecked Sendable {
     public var frame: Rect
     public var renderCommand: RenderCommand
     public var children: [LayoutNode]
+    public var interaction: Interaction?
 
     public init(
         frame: Rect,
         renderCommand: RenderCommand,
-        children: [LayoutNode] = []
+        children: [LayoutNode] = [],
+        interaction: Interaction? = nil
     ) {
         self.frame = frame
         self.renderCommand = renderCommand
         self.children = children
+        self.interaction = interaction
+    }
+}
+
+extension LayoutNode {
+    /// Recursively shifts this node and all its descendants by (dx, dy).
+    /// Used by container components to apply the parent-computed absolute
+    /// position to a child subtree that was laid out in local (0,0) space.
+    public func offsetted(x dx: Float, y dy: Float) -> LayoutNode {
+        var copy = self
+        copy.frame = Rect(x: frame.x + dx, y: frame.y + dy,
+                          width: frame.width, height: frame.height)
+        copy.children = children.map { $0.offsetted(x: dx, y: dy) }
+        return copy
     }
 }
 
@@ -83,31 +112,17 @@ public final class YogaNode {
         let p = _padding
         let g = _gap
 
-        var frames: [Rect] = []
+        var childFrames: [Rect] = []
         var cursor: Float = p
 
         for child in _children {
-            let childConstraint = LayoutConstraint.loose(
-                Size(width: w - p * 2, height: constraint.available.height)
-            )
-            let childFrames = child.calculateLayout(constraint: childConstraint)
-            let childH = child._height ?? 44  // altura padrão se não especificada
-
-            let childFrame = Rect(x: p, y: cursor, width: w - p * 2, height: childH)
-            frames.append(childFrame)
-
-            // frames dos netos (offset relativo ao filho)
-            for var sub in childFrames.dropFirst() {
-                sub.origin.x += childFrame.x
-                sub.origin.y += childFrame.y
-                frames.append(sub)
-            }
-
+            let childH = child._height ?? 44
+            childFrames.append(Rect(x: p, y: cursor, width: w - p * 2, height: childH))
             cursor += childH + g
         }
 
         let selfH = _height ?? (cursor + p)
         let selfFrame = Rect(x: 0, y: 0, width: w, height: selfH)
-        return [selfFrame] + frames
+        return [selfFrame] + childFrames
     }
 }

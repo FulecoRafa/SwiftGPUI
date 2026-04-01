@@ -62,9 +62,9 @@ public struct Color: Sendable {
 
     // Paleta semântica — substituir por tokens de design
     public static let primary   = Color(r: 0.38, g: 0.47, b: 1.00)
-    public static let surface   = Color(r: 0.15, g: 0.15, b: 0.20)
+    public static let surface   = Color(r: 0.20, g: 0.20, b: 0.28)
     public static let onSurface = Color(r: 0.90, g: 0.90, b: 0.95)
-    public static let border    = Color(r: 0.30, g: 0.30, b: 0.38)
+    public static let border    = Color(r: 0.35, g: 0.35, b: 0.48)
     public static let clear     = Color(r: 0, g: 0, b: 0, a: 0)
 }
 
@@ -98,6 +98,29 @@ public struct Shadow: Sendable {
         blur: 12,
         color: Color(r: 0, g: 0, b: 0, a: 0.35)
     )
+}
+
+// MARK: - Binding
+
+/// Platform-agnostic get/set pair. Pass to interactive components like Input.
+/// The platform renderer bridges this to its native text field API.
+public final class GPUIBinding<T>: @unchecked Sendable {
+    private let _get: () -> T
+    private let _set: (T) -> Void
+
+    public init(get: @escaping () -> T, set: @escaping (T) -> Void) {
+        self._get = get
+        self._set = set
+    }
+
+    public var value: T { _get() }
+    public func setValue(_ newValue: T) { _set(newValue) }
+
+    /// Convenience: bind directly to a property on a reference type.
+    ///   Input(label: "Name", binding: GPUIBinding(model, \.name))
+    public convenience init<Root: AnyObject>(_ root: Root, _ keyPath: ReferenceWritableKeyPath<Root, T>) {
+        self.init(get: { root[keyPath: keyPath] }, set: { root[keyPath: keyPath] = $0 })
+    }
 }
 
 // MARK: - RenderCommand
