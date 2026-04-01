@@ -36,41 +36,59 @@ public enum SwiftUIRenderer {
                     .font(.system(size: CGFloat(font.size), weight: font.swiftUIWeight))
                     .foregroundColor(color.swiftUIColor)
             )
-            context.draw(resolved, in: cgRect)
+            // Draw anchored to the leading-top of the frame.
+            context.draw(resolved, at: CGPoint(x: cgRect.minX, y: cgRect.midY), anchor: .leading)
 
-        case .roundedRect(let radius, let fill, let border, _):
+        case .roundedRect(let radius, let fill, let border, let shadow):
             let path = Path(roundedRect: cgRect, cornerRadius: CGFloat(radius))
-            context.fill(path, with: .color(fill.swiftUIColor))
+
+            if let shadow {
+                context.drawLayer { ctx in
+                    ctx.addFilter(.shadow(
+                        color: shadow.color.swiftUIColor,
+                        radius: CGFloat(shadow.blur / 2),
+                        x: CGFloat(shadow.offset.x),
+                        y: CGFloat(shadow.offset.y)
+                    ))
+                    ctx.fill(path, with: .color(fill.swiftUIColor))
+                }
+            } else {
+                context.fill(path, with: .color(fill.swiftUIColor))
+            }
+
             if let border {
                 context.stroke(path, with: .color(border.swiftUIColor), lineWidth: 1)
             }
 
         case .button(let label, let fill, let labelColor):
-            let path = Path(roundedRect: cgRect, cornerRadius: 6)
+            let path = Path(roundedRect: cgRect, cornerRadius: 8)
             context.fill(path, with: .color(fill.swiftUIColor))
-            let inner = Rect(
-                x: frame.x + 12, y: frame.y + 10,
-                width: frame.width - 24, height: frame.height - 20
-            )
-            draw(command: .text(label, font: .body, color: labelColor),
-                 frame: inner, into: &context)
 
-        case .textField(let placeholder, let label, _, let secure, let focused):
+            let resolved = context.resolve(
+                SwiftUI.Text(label)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(labelColor.swiftUIColor)
+            )
+            context.draw(resolved, at: CGPoint(x: cgRect.midX, y: cgRect.midY), anchor: .center)
+
+        case .textField(_, let label, _, _, let focused):
+            // Draw shell only: background + border + floating label.
+            // The platform TextField overlay renders all text (placeholder + value + cursor).
             let borderColor: SwiftGPUI.Color = focused ? .primary : .border
-            let path = Path(roundedRect: cgRect, cornerRadius: 4)
+            let path = Path(roundedRect: cgRect, cornerRadius: 6)
             context.fill(path, with: .color(SwiftGPUI.Color.surface.swiftUIColor))
             context.stroke(path, with: .color(borderColor.swiftUIColor), lineWidth: 1)
 
             if let label {
-                let labelFrame = Rect(x: frame.x + 8, y: frame.y - 10, width: 200, height: 16)
-                draw(command: .text(label, font: .label, color: .onSurface),
-                     frame: labelFrame, into: &context)
+                let labelPos = CGPoint(x: cgRect.minX + 10, y: cgRect.minY + 8)
+                let labelColor = SwiftGPUI.Color(r: 0.55, g: 0.60, b: 0.75, a: 1)
+                let resolvedLabel = context.resolve(
+                    SwiftUI.Text(label)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(labelColor.swiftUIColor)
+                )
+                context.draw(resolvedLabel, at: labelPos, anchor: .leading)
             }
-            let display = secure ? String(repeating: "•", count: 8) : placeholder
-            let textFrame = Rect(x: frame.x + 12, y: frame.y + 12,
-                                 width: frame.width - 24, height: frame.height - 24)
-            draw(command: .text(display, font: .body, color: .onSurface),
-                 frame: textFrame, into: &context)
 
         case .clipped(let inner, let clipRect):
             context.clip(to: Path(CGRect(clipRect)))

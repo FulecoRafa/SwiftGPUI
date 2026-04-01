@@ -29,23 +29,41 @@ public struct Card: View {
         node.setPadding(padding)
         node.setGap(12)
 
+        let innerWidth = constraint.available.width - padding * 2
+        let childConstraint = LayoutConstraint.loose(
+            Size(width: innerWidth, height: constraint.available.height)
+        )
         let childNodes: [LayoutNode] = children.map { child in
             let childYoga = YogaNode()
             node.addChild(childYoga)
-            return child.layout(node: childYoga, constraint: constraint)
+            return child.layout(node: childYoga, constraint: childConstraint)
         }
 
         let frames = node.calculateLayout(constraint: constraint)
         let selfFrame = frames.first ?? .zero
+
+        // frames[1..n] are the absolute positions for each direct child.
+        // child.layout() produced frames in local (0,0) space; apply the delta.
+        let positioned: [LayoutNode] = childNodes.enumerated().map { i, childNode in
+            guard i + 1 < frames.count else { return childNode }
+            let target = frames[i + 1]
+            return childNode.offsetted(x: target.x - childNode.frame.x,
+                                       y: target.y - childNode.frame.y)
+        }
+
+        // Tell the parent layout engine our true computed height,
+        // so it doesn't fall back to the default 44pt stub.
+        node.setHeight(selfFrame.height)
 
         return LayoutNode(
             frame: selfFrame,
             renderCommand: .roundedRect(
                 radius: cornerRadius,
                 fill: .surface,
+                border: .border,
                 shadow: .card
             ),
-            children: childNodes
+            children: positioned
         )
     }
 }
@@ -58,26 +76,22 @@ public struct Input: View {
     private let label: String?
     private let placeholder: String
     private let style: Style
-    private let value: String
+    private let binding: GPUIBinding<String>?
 
-    public init(
-        label: String? = nil,
-        _ style: Style = .text,
-        value: String = "",
-        @ViewBuilder placeholder: () -> String = { "" }
-    ) {
+    /// Bind to a GPUIBinding — the platform renderer wires this to a native text field.
+    public init(label: String? = nil, _ style: Style = .text, binding: GPUIBinding<String>) {
         self.label = label
         self.style = style
-        self.value = value
-        self.placeholder = placeholder()
+        self.placeholder = ""
+        self.binding = binding
     }
 
-    /// Conveniência para `Input(label:)` sem placeholder builder.
+    /// Read-only display (no editing).
     public init(label: String? = nil, _ style: Style = .text, value: String = "") {
         self.label = label
         self.style = style
-        self.value = value
-        self.placeholder = ""
+        self.placeholder = value
+        self.binding = nil
     }
 
     public func layout(node: YogaNode, constraint: LayoutConstraint) -> LayoutNode {
@@ -91,10 +105,13 @@ public struct Input: View {
             renderCommand: .textField(
                 placeholder: placeholder.isEmpty ? (label ?? "") : placeholder,
                 label: label,
-                value: value,
+                value: binding?.value ?? placeholder,
                 secure: style == .password,
                 focused: false
-            )
+            ),
+            interaction: binding.map {
+                .textInput(binding: $0, placeholder: placeholder.isEmpty ? (label ?? "") : placeholder)
+            }
         )
     }
 }
@@ -106,35 +123,52 @@ public struct Flex: View {
 
     private let direction: Direction
     private let gap: Float
+    private let padding: Float
     private let children: [any View]
 
     public init(
         direction: Direction = .vertical,
         gap: Float = 8,
+        padding: Float = 0,
         @ViewBuilder content: () -> [any View]
     ) {
         self.direction = direction
         self.gap = gap
+        self.padding = padding
         self.children = content()
     }
 
     public func layout(node: YogaNode, constraint: LayoutConstraint) -> LayoutNode {
         node.setFlexDirection(direction == .horizontal ? .row : .column)
         node.setGap(gap)
+        node.setPadding(padding)
 
+        let innerWidth = constraint.available.width - padding * 2
+        let childConstraint = LayoutConstraint.loose(
+            Size(width: innerWidth, height: constraint.available.height)
+        )
         let childNodes: [LayoutNode] = children.map { child in
             let childYoga = YogaNode()
             node.addChild(childYoga)
-            return child.layout(node: childYoga, constraint: constraint)
+            return child.layout(node: childYoga, constraint: childConstraint)
         }
 
         let frames = node.calculateLayout(constraint: constraint)
         let frame = frames.first ?? .zero
 
+        let positioned: [LayoutNode] = childNodes.enumerated().map { i, childNode in
+            guard i + 1 < frames.count else { return childNode }
+            let target = frames[i + 1]
+            return childNode.offsetted(x: target.x - childNode.frame.x,
+                                       y: target.y - childNode.frame.y)
+        }
+
+        node.setHeight(frame.height)
+
         return LayoutNode(
             frame: frame,
             renderCommand: .group([]),
-            children: childNodes
+            children: positioned
         )
     }
 }
@@ -146,9 +180,11 @@ public struct Button: View {
 
     private let colorStyle: Color
     private let label: String
+    private let action: (() -> Void)?
 
-    public init(color: Color = .default, @ViewBuilder label: () -> String) {
+    public init(color: Color = .default, label: () -> String, onClick: (() -> Void)? = nil) {
         self.colorStyle = color
+        self.action = onClick
         self.label = label()
     }
 
@@ -175,7 +211,8 @@ public struct Button: View {
 
         return LayoutNode(
             frame: frame,
-            renderCommand: .button(label: label, fill: fillColor, labelColor: labelColor)
+            renderCommand: .button(label: label, fill: fillColor, labelColor: labelColor),
+            interaction: action.map { .tap($0) }
         )
     }
 }
