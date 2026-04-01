@@ -1,95 +1,136 @@
 # SwiftGPUI
 
-Render engine experimental para UI declarativa em Swift, inspirada em SwiftUI,
-com renderização via GPU usando **Skia** e layout via **Yoga** (Flexbox).
+An experimental declarative UI framework for Swift. You write views in a SwiftUI-like DSL — the framework handles layout, rendering, and reactive state updates. The long-term rendering target is GPU-accelerated via **Skia**; layout is powered by **Yoga** (Meta's Flexbox engine). While those C libraries are being integrated, a **SwiftUI Canvas** backend renders everything so the framework is fully runnable today.
 
-## Arquitetura
+This is built as a mixture of what Flutter does, by basically using a rendering engine and drawing everything on it. Even though Flutter has
+migrated from Skia, it is still very much used all around, so it seems
+good enough. It also takes inspiration in Rust's GPUI and Go's Gogpu UI, both projects for rendering directly no GPU. 
 
+
+## How it works
+
+You never touch SwiftUI directly. Your app conforms to `GPUIDesktopApp`, declares a `rootView` using GPUI components, and the platform layer handles the rest.
+
+```swift
+import SwiftGPUI
+import GPUIPlatformMacOS
+
+@main
+struct MyApp: GPUIDesktopApp {
+    let model = MyModel()
+
+    var rootView: any SwiftGPUI.View {
+        MyView(model: model)
+    }
+}
 ```
-SwiftGPUI (componentes de alto nível: Card, Input, Button, Flex…)
-    │
-    ├── GPUIObserve   → render loop + integração @Observable
-    ├── GPUIInterpret → protocolo View, ViewBuilder, traversal
-    ├── GPUILayout    → bridge Yoga → LayoutNode
-    ├── GPUIDraw      → tipos puros (Color, Rect, RenderCommand…)
-    │
-    ├── CYoga         → C bindings para o Yoga (layout Flexbox)
-    └── CSkia         → C bindings para o Skia (renderização GPU)
-```
 
-## Uso rápido
+Your views compose GPUI components and bind to `@Observable` models:
 
 ```swift
 import SwiftGPUI
 
-// Estado reativo
-@Observable class LoginState {
-    var email    = ""
-    var password = ""
-}
-
-// UI declarativa
-struct LoginForm: View {
-    let state: LoginState
+struct MyView: SwiftGPUI.View {
+    let model: MyModel
 
     func layout(node: YogaNode, constraint: LayoutConstraint) -> LayoutNode {
-        Card {
-            Input(label: "usuário", value: state.email)
-            Input(.password,        value: state.password)
-            Flex(direction: .horizontal) {
-                Button             { "Cancel" }
-                Button(color: .primary) { "Login"  }
+        Flex(direction: .vertical, gap: 16, padding: 24) {
+            Card(padding: 20) {
+                Input(label: "Name", binding: GPUIBinding(model, \.name))
+                Input(label: "Email", binding: GPUIBinding(model, \.email))
             }
-        }.layout(node: node, constraint: constraint)
+            Card(padding: 20) {
+                Text(model.greeting, font: .heading, color: .primary)
+                Button(color: .primary, onClick: model.submit) { "Submit" }
+            }
+        }
+        .layout(node: node, constraint: constraint)
     }
 }
-
-// Inicializar engine
-let state    = LoginState()
-let renderer = MockRenderer()   // troque por SkiaRenderer quando Skia estiver linkado
-let loop     = await RenderLoop(
-    rootView:   LoginForm(state: state),
-    windowSize: Size(width: 360, height: 800),
-    renderer:   renderer
-)
-await loop.start()
-
-// Qualquer mutação em `state` dispara re-render automaticamente
-state.email = "rafael@kaffa.com.br"
 ```
 
-## Integrando as libs C
+Mutating an `@Observable` property automatically schedules a re-render — no manual state management needed.
+
+## Architecture
+
+```
+Your App
+  └── GPUIDesktopApp (GPUIPlatformMacOS)
+        └── GPUICanvas — SwiftUI Canvas surface + native input overlays
+              │
+              └── Interpreter.interpret(rootView, constraint)
+                    │
+                    ├── View.layout()           each component builds a LayoutNode tree
+                    ├── YogaNode.calculateLayout()  computes absolute frames
+                    └── collect() / collectInteractions()  flattens to draw list + interactions
+                          │
+                          ├── SwiftUIRenderer.draw()   draws everything onto the Canvas
+                          └── Platform overlays        transparent TextField / tap targets
+```
+
+### Module breakdown
+
+| Module | Responsibility |
+|--------|----------------|
+| `GPUIDraw` | Pure value types — `Color`, `Rect`, `Font`, `RenderCommand`, `GPUIBinding` |
+| `GPUILayout` | `YogaNode` wrapper, `LayoutNode` tree, `Interaction` enum |
+| `GPUIInterpret` | `View` protocol, `ViewBuilder` DSL, `Interpreter` traversal |
+| `GPUIObserve` | `RenderLoop` + `@Observable` tracking, `Renderer` protocol, `SkiaRenderer` stub |
+| `SwiftGPUI` | Re-exports all modules + built-in components (`Card`, `Input`, `Button`, `Flex`, `Text`) |
+| `GPUIPlatformMacOS` | macOS window management, `GPUICanvas`, `SwiftUIRenderer` |
+| `CYoga` | C bindings for Meta's Yoga layout engine |
+| `CSkia` | C bindings for Skia's stable C API (`sk_*`) |
+
+## Components
+
+| Component | API |
+|-----------|-----|
+| `Text` | `Text("Hello", font: .heading, color: .primary)` |
+| `Button` | `Button(color: .primary, onClick: action) { "Label" }` |
+| `Input` | `Input(label: "Name", binding: GPUIBinding(model, \.name))` |
+| `Card` | `Card(padding: 20, cornerRadius: 12) { ... }` |
+| `Flex` | `Flex(direction: .horizontal, gap: 8, padding: 16) { ... }` |
+
+## Reactivity
+
+`GPUIBinding` bridges an `@Observable` model property to interactive components. Create one with a key path — no boilerplate:
+
+```swift
+GPUIBinding(model, \.fieldName)
+```
+
+The render loop uses `withObservationTracking` to detect any property access during layout and automatically re-renders when those properties change.
+
+## Running the demo
+
+```bash
+swift run GPUIDemo
+```
+
+Opens a macOS window with a reactive form: type into the Name and Occupation fields, the output card updates live. Clicking Submit commits the values.
+
+## Integrating the C libraries
 
 ### Yoga
 ```bash
-# Clone o fork Swift-friendly dentro de Sources/CYoga
-git submodule add https://github.com/nicklockwood/Yoga Sources/CYoga/yoga
-# Aponte os sources no Package.swift para Sources/CYoga/yoga/yoga
+git submodule add https://github.com/facebook/yoga Sources/CYoga/yoga
+# then replace the stub in YogaNode.calculateLayout() with real YGNode* calls
 ```
 
 ### Skia
-Baixe binários pré-compilados ou compile do fonte:
-- https://skia.org/docs/user/build/
-- Adicione `linkerSettings: [.linkedLibrary("skia")]` no target CSkia
-
-## Módulos
-
-| Módulo | Responsabilidade |
-|--------|-----------------|
-| `GPUIDraw` | Tipos de valor puros — Color, Rect, Font, RenderCommand |
-| `GPUILayout` | Bridge Yoga → LayoutNode. Calcula frames absolutos |
-| `GPUIInterpret` | Protocolo View, ViewBuilder, traversal da árvore |
-| `GPUIObserve` | Render loop + `@Observable` tracking + Renderer protocol |
-| `SwiftGPUI` | Re-exporta tudo + componentes prontos (Card, Input…) |
-| `CYoga` | Bindings C para o Yoga |
-| `CSkia` | Bindings C para o Skia (API sk_*) |
+Download prebuilt binaries or build from source:
+```
+https://skia.org/docs/user/build/
+```
+Add `linkerSettings: [.linkedLibrary("skia")]` to the `CSkia` target in `Package.swift`, then uncomment the `sk_*` calls in `SkiaRenderer`. The `SwiftUIRenderer` in `GPUIPlatformMacOS` can then be removed.
 
 ## Roadmap
 
-- [ ] Integrar Yoga real (substituir stub de layout)
-- [ ] Integrar Skia real (substituir stub de renderer)
-- [ ] Gerenciamento de eventos (mouse, teclado, touch)
-- [ ] Componentes: ScrollView, List, Modal, Toast
-- [ ] Hot reload via file watching (SwiftWatch 👀)
-- [ ] Suporte a temas / design tokens
-- [ ] Backend alternativo: wgpu-native (WebGPU)
+- [ ] Integrate real Yoga (replace layout stub)
+- [ ] Integrate real Skia (replace SwiftUI Canvas backend)
+- [ ] Mouse and keyboard event handling
+- [ ] `ScrollView`, `List`, `Modal`, `Toast` components
+- [ ] Design tokens / theming
+- [ ] Hot reload via file watching
+- [ ] Linux platform backend (via Skia + native windowing)
+- [ ] WebGPU backend (wgpu-native)
