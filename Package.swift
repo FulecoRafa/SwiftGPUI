@@ -10,6 +10,9 @@ let package = Package(
         // Demo executável — rode com: swift run GPUIDemo
         .executable(name: "GPUIDemo", targets: ["GPUIDemo"]),
 
+        // Platform backend: macOS SwiftUI canvas + window management
+        .library(name: "GPUIPlatformMacOS", targets: ["GPUIPlatformMacOS"]),
+
         // Biblioteca principal — o que consumidores importam
         .library(name: "SwiftGPUI", targets: ["SwiftGPUI"]),
 
@@ -113,12 +116,21 @@ let package = Package(
             path: "Sources/SwiftGPUI"
         ),
 
+        // ── GPUIPlatformMacOS ─────────────────────────────────────
+        // SwiftUI/AppKit display backend for macOS.
+        // Provides GPUIDesktopApp, GPUICanvas, and window management.
+        .target(
+            name: "GPUIPlatformMacOS",
+            dependencies: ["SwiftGPUI"],
+            path: "Sources/GPUIPlatformMacOS"
+        ),
+
         // ── GPUIDemo (executável Hello World) ────────────────────
         // Usa SwiftUI Canvas como display backend enquanto o Skia
         // não está linkado. Rode com: swift run GPUIDemo
         .executableTarget(
             name: "GPUIDemo",
-            dependencies: ["SwiftGPUI"],
+            dependencies: ["SwiftGPUI", "GPUIPlatformMacOS"],
             path: "Sources/GPUIDemo",
             swiftSettings: [
                 .unsafeFlags(["-parse-as-library"])
