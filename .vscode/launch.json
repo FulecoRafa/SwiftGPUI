@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:SwiftGPUI}",
+            "name": "Debug GPUIDemo",
+            "target": "GPUIDemo",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug GPUIDemo"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:SwiftGPUI}",
+            "name": "Release GPUIDemo",
+            "target": "GPUIDemo",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release GPUIDemo"
+        }
+    ]
+}
