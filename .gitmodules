@@ -1,0 +1,6 @@
+[submodule "Vendors/SwiftYoga"]
+	path = Vendors/SwiftYoga
+	url = file:///Users/fuleco/Documents/Dev/SwiftYoga
+[submodule "Vendors/SwiftSkia"]
+	path = Vendors/SwiftSkia
+	url = file:///Users/fuleco/Documents/Dev/SwiftSkia

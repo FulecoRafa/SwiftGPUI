@@ -1,15 +1,12 @@
 import GPUIDraw
+import CYoga
 
 // MARK: - LayoutNode
 //
-// Resultado do cálculo de layout: frame absoluto na janela
-// e o comando de renderização associado a esse nó.
+// Result of layout calculation: absolute frame in window coordinates
+// plus the associated render command for this node.
 
 // MARK: - Interaction
-//
-// Carried alongside a LayoutNode for components that need platform-side
-// event handling (e.g. text input). The platform renderer reads this and
-// creates a native interactive control positioned over the drawn frame.
 
 public enum Interaction: @unchecked Sendable {
     case textInput(binding: GPUIBinding<String>, placeholder: String)
@@ -68,61 +65,83 @@ public struct LayoutConstraint: Sendable {
 
 // MARK: - YogaNode
 //
-// Wrapper Swift sobre a API C do Yoga.
-// Encapsula YGNodeRef e expõe uma interface com value semantics.
-// Quando a lib Yoga real estiver linkada, basta descomentar as
-// chamadas e remover os stubs de fallback.
+// Swift wrapper around the Yoga C API (YGNode*).
+// Each instance owns a YGNodeRef and frees it on deinit.
 
 public final class YogaNode {
 
-    // Em produção: private let ref: YGNodeRef = YGNodeNew()
-    private var _flexDirection: FlexDirection = .column
-    private var _padding: Float = 0
-    private var _gap: Float = 0
-    private var _width: Float? = nil
-    private var _height: Float? = nil
-    private var _children: [YogaNode] = []
+    private let ref: YGNodeRef
 
     public enum FlexDirection { case row, column }
 
-    public init() {}
+    public init() {
+        ref = YGNodeNew()
+    }
 
-    public func setFlexDirection(_ d: FlexDirection) { _flexDirection = d }
-    public func setPadding(_ value: Float)            { _padding = value  }
-    public func setGap(_ value: Float)                { _gap = value      }
-    public func setWidth(_ value: Float)              { _width = value    }
-    public func setHeight(_ value: Float)             { _height = value   }
+    deinit {
+        YGNodeFree(ref)
+    }
+
+    public func setFlexDirection(_ d: FlexDirection) {
+        let yg: YGFlexDirection = d == .row ? YGFlexDirectionRow : YGFlexDirectionColumn
+        YGNodeStyleSetFlexDirection(ref, yg)
+    }
+
+    public func setPadding(_ value: Float) {
+        YGNodeStyleSetPadding(ref, YGEdgeAll, value)
+    }
+
+    public func setGap(_ value: Float) {
+        YGNodeStyleSetGap(ref, YGGutterAll, value)
+    }
+
+    public func setWidth(_ value: Float) {
+        YGNodeStyleSetWidth(ref, value)
+    }
+
+    public func setHeight(_ value: Float) {
+        YGNodeStyleSetHeight(ref, value)
+    }
 
     public func addChild(_ child: YogaNode) {
+        let index = YGNodeGetChildCount(ref)
+        YGNodeInsertChild(ref, child.ref, index)
+        // Retain child so it isn't freed before the parent finishes layout.
         _children.append(child)
     }
 
-    /// Calcula o layout dentro do constraint dado.
-    /// Retorna frames absolutos para self e todos os descendentes.
+    /// Calculates layout and returns frames for self followed by each child,
+    /// in the same order they were added via addChild(_:).
     public func calculateLayout(constraint: LayoutConstraint) -> [Rect] {
-        // ── Stub de layout manual ────────────────────────────────────
-        // Quando o Yoga real estiver linkado, substitua por:
-        //   YGNodeCalculateLayout(ref, constraint.available.width,
-        //                         constraint.available.height, YGDirectionLTR)
-        // e leia os resultados com YGNodeLayoutGet*(ref).
-        //
-        // Por ora: stack linear simples que respeita padding e gap.
+        // Pass Float.nan (= YGUndefined) for height so Yoga sizes containers
+        // to their content rather than stretching to fill the available height.
+        // Width is constrained so items wrap/clip correctly.
+        YGNodeCalculateLayout(
+            ref,
+            constraint.available.width,
+            Float.nan,
+            YGDirectionLTR
+        )
 
-        let w = _width  ?? constraint.available.width
-        let p = _padding
-        let g = _gap
+        let selfFrame = Rect(
+            x: YGNodeLayoutGetLeft(ref),
+            y: YGNodeLayoutGetTop(ref),
+            width: YGNodeLayoutGetWidth(ref),
+            height: YGNodeLayoutGetHeight(ref)
+        )
 
-        var childFrames: [Rect] = []
-        var cursor: Float = p
-
-        for child in _children {
-            let childH = child._height ?? 44
-            childFrames.append(Rect(x: p, y: cursor, width: w - p * 2, height: childH))
-            cursor += childH + g
+        let childFrames: [Rect] = _children.map { child in
+            Rect(
+                x: YGNodeLayoutGetLeft(child.ref),
+                y: YGNodeLayoutGetTop(child.ref),
+                width: YGNodeLayoutGetWidth(child.ref),
+                height: YGNodeLayoutGetHeight(child.ref)
+            )
         }
 
-        let selfH = _height ?? (cursor + p)
-        let selfFrame = Rect(x: 0, y: 0, width: w, height: selfH)
         return [selfFrame] + childFrames
     }
+
+    // Keeps children alive for the lifetime of this node.
+    private var _children: [YogaNode] = []
 }

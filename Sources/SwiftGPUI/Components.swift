@@ -42,18 +42,12 @@ public struct Card: View {
         let frames = node.calculateLayout(constraint: constraint)
         let selfFrame = frames.first ?? .zero
 
-        // frames[1..n] are the absolute positions for each direct child.
-        // child.layout() produced frames in local (0,0) space; apply the delta.
         let positioned: [LayoutNode] = childNodes.enumerated().map { i, childNode in
             guard i + 1 < frames.count else { return childNode }
             let target = frames[i + 1]
             return childNode.offsetted(x: target.x - childNode.frame.x,
                                        y: target.y - childNode.frame.y)
         }
-
-        // Tell the parent layout engine our true computed height,
-        // so it doesn't fall back to the default 44pt stub.
-        node.setHeight(selfFrame.height)
 
         return LayoutNode(
             frame: selfFrame,
@@ -96,10 +90,9 @@ public struct Input: View {
 
     public func layout(node: YogaNode, constraint: LayoutConstraint) -> LayoutNode {
         node.setHeight(52)
-
-        let frames = node.calculateLayout(constraint: constraint)
-        let frame = frames.first ?? .zero
-
+        // Leaf: do not call calculateLayout — the parent container owns that call.
+        // Return a preliminary frame; the parent will reposition via offsetted().
+        let frame = Rect(x: 0, y: 0, width: constraint.available.width, height: 52)
         return LayoutNode(
             frame: frame,
             renderCommand: .textField(
@@ -163,8 +156,6 @@ public struct Flex: View {
                                        y: target.y - childNode.frame.y)
         }
 
-        node.setHeight(frame.height)
-
         return LayoutNode(
             frame: frame,
             renderCommand: .group([]),
@@ -190,9 +181,8 @@ public struct Button: View {
 
     public func layout(node: YogaNode, constraint: LayoutConstraint) -> LayoutNode {
         node.setHeight(44)
-
-        let frames = node.calculateLayout(constraint: constraint)
-        let frame = frames.first ?? .zero
+        // Leaf: parent container owns the calculateLayout call.
+        let frame = Rect(x: 0, y: 0, width: constraint.available.width, height: 44)
 
         let fillColor: GPUIDraw.Color
         let labelColor: GPUIDraw.Color
@@ -235,10 +225,12 @@ public struct Text: View {
     }
 
     public func layout(node: YogaNode, constraint: LayoutConstraint) -> LayoutNode {
-        node.setHeight(Float(font.size) + 8)
-        let frames = node.calculateLayout(constraint: constraint)
+        let h = Float(font.size) + 8
+        node.setHeight(h)
+        // Leaf: parent container owns the calculateLayout call.
+        let frame = Rect(x: 0, y: 0, width: constraint.available.width, height: h)
         return LayoutNode(
-            frame: frames.first ?? .zero,
+            frame: frame,
             renderCommand: .text(content, font: font, color: color)
         )
     }
