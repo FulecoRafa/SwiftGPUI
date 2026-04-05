@@ -1,24 +1,40 @@
+import Foundation
 import Observation
 
 @Observable
 class FormModel {
+    // Personal info
     var name: String = ""
-    var occupation: String = ""
+    var email: String = ""
+    var password: String = ""
+    var birthDate: Date = Date()
+    var bio: String = ""
 
-    var submitted = false
+    // Preferences
+    var country: String = "br"
+    var role: String = "dev"
+    var searchQuery: String = ""
+    var newsletter: Bool = false
+    var agreeToTerms: Bool = false
 
-    var greeting: String {
-        guard submitted else { return name.isEmpty ? "Type your name above…" : "Hello, \(name)!" }
-        return "Welcome, \(name)!"
-    }
+    // Submission
+    var submitted: Bool = false
 
-    var subtitle: String {
-        guard submitted else { return occupation.isEmpty ? "And your occupation" : "\(occupation) @ SwiftGPUI" }
-        return "\(occupation) — form submitted!"
-    }
+    var canSubmit: Bool { !name.isEmpty && !email.isEmpty && agreeToTerms }
 
     func submit() {
-        guard !name.isEmpty else { return }
+        guard canSubmit else { return }
         submitted = true
+    }
+
+    func reset() {
+        name = ""
+        email = ""
+        password = ""
+        bio = ""
+        searchQuery = ""
+        newsletter = false
+        agreeToTerms = false
+        submitted = false
     }
 }

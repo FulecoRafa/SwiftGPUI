@@ -1,3 +1,4 @@
+import Foundation
 import GPUIDraw
 import CYoga
 
@@ -9,8 +10,11 @@ import CYoga
 // MARK: - Interaction
 
 public enum Interaction: @unchecked Sendable {
-    case textInput(binding: GPUIBinding<String>, placeholder: String)
+    case textInput(binding: GPUIBinding<String>, placeholder: String, secure: Bool = false, leadingInset: CGFloat = 12)
+    case textArea(binding: GPUIBinding<String>, placeholder: String)
     case tap(() -> Void)
+    case selectPick(options: [String], selectedIndex: Int, onSelect: (Int) -> Void)
+    case datePick(get: () -> Date, set: (Date) -> Void)
 }
 
 // MARK: - LayoutNode

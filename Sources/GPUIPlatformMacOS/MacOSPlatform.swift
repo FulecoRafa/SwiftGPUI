@@ -30,6 +30,25 @@ extension GPUIDesktopApp {
     }
 }
 
+// MARK: - SkiaState
+
+/// Owns the SkiaRenderer and only recreates the surface when pixel dimensions change.
+/// Stored as a @StateObject so it survives SwiftUI body re-evaluations.
+private final class SkiaState: ObservableObject {
+    private(set) var renderer: SkiaRenderer?
+    private var lastWidth:  Int32 = 0
+    private var lastHeight: Int32 = 0
+
+    func renderer(width: Int32, height: Int32, scale: Float) -> SkiaRenderer {
+        if renderer == nil || width != lastWidth || height != lastHeight {
+            renderer  = SkiaRenderer(width: width, height: height, scale: scale)
+            lastWidth  = width
+            lastHeight = height
+        }
+        return renderer!
+    }
+}
+
 // MARK: - GPUICanvas
 
 /// The only SwiftUI surface. Everything visible is drawn by SwiftUIRenderer
@@ -41,6 +60,7 @@ extension GPUIDesktopApp {
 /// Canvas call is replaced by a Skia surface; the overlay pattern stays the same.
 public struct GPUICanvas: SwiftUI.View {
     private let root: any SwiftGPUI.View
+    @StateObject private var skiaState = SkiaState()
 
     public init(root: any SwiftGPUI.View) {
         self.root = root
@@ -48,13 +68,29 @@ public struct GPUICanvas: SwiftUI.View {
 
     public var body: some SwiftUI.View {
         GeometryReader { geo in
+            ScrollView(.vertical, showsIndicators: true) {
+            let scale = CGFloat(NSScreen.main?.backingScaleFactor ?? 1)
             let (commands, interactions) = layout(size: geo.size)
+            let contentHeight = commands.map { $0.0.maxY }.max().map { CGFloat($0) } ?? geo.size.height
+
+            // Reuse or recreate the Skia surface only when pixel dimensions change.
+            // SwiftUI is only used for the transparent interactive overlays below.
+            let skia = skiaState.renderer(
+                width:  Int32(geo.size.width * scale),
+                height: Int32(contentHeight  * scale),
+                scale:  Float(scale)
+            )
+            let _ = { skia.render(commands: commands) }()
 
             ZStack(alignment: .topLeading) {
-                // ── All rendering happens here ──────────────────────────
-                Canvas { context, _ in
-                    SwiftUIRenderer.draw(commands: commands, into: &context)
+                // ── Skia-rendered frame ─────────────────────────────────
+                if let img = skia.cgImage {
+                    Image(img, scale: scale, label: SwiftUI.Text(""))
+                        .resizable()
+                        .frame(width: geo.size.width, height: contentHeight)
                 }
+                // ── frame placeholder so ZStack has the right size ──────
+                SwiftUI.Color.clear.frame(height: contentHeight)
 
                 // ── Transparent input capture overlays ──────────────────
                 // Invisible to the user — the canvas draws the visual shell.
@@ -69,24 +105,46 @@ public struct GPUICanvas: SwiftUI.View {
                         y: CGFloat(frame.y) + CGFloat(frame.height) / 2
                     )
                     switch interaction {
-                    case .textInput(let binding, let placeholder):
-                        TextField(placeholder, text: SwiftUI.Binding(
+                    case .textInput(let binding, let placeholder, let secure, let leadingInset):
+                        TextInputOverlay(
+                            frame: frame,
+                            binding: binding,
+                            placeholder: placeholder,
+                            secure: secure,
+                            leadingInset: leadingInset
+                        )
+                        .position(centre)
+
+                    case .textArea(let binding, _):
+                        TextEditor(text: SwiftUI.Binding(
                             get: { binding.value },
                             set: { binding.setValue($0) }
                         ))
-                        .textFieldStyle(.plain)
-                        .foregroundColor(.white)
+                        .scrollContentBackground(.hidden)
                         .background(.clear)
-                        .padding(.horizontal, 12)
+                        .foregroundColor(.white)
+                        .font(.system(size: 14))
+                        .padding(.horizontal, 8)
+                        .padding(.top, 20)
                         .frame(width: CGFloat(frame.width), height: CGFloat(frame.height))
                         .position(centre)
 
                     case .tap(let action):
                         TapOverlay(frame: frame, action: action)
                             .position(centre)
+
+                    case .selectPick(let options, let selectedIndex, let onSelect):
+                        SelectOverlay(frame: frame, options: options, selectedIndex: selectedIndex, onSelect: onSelect)
+                            .position(centre)
+
+                    case .datePick(let get, let set):
+                        DatePickOverlay(frame: frame, get: get, set: set)
+                            .position(centre)
                     }
                 }
             }
+            .frame(width: geo.size.width, height: contentHeight)
+            } // ScrollView
         }
         .background(SwiftUI.Color(red: 0.12, green: 0.12, blue: 0.18))
     }
@@ -124,6 +182,122 @@ private struct TapOverlay: SwiftUI.View {
                 } else {
                     NSCursor.pop()
                 }
+            }
+    }
+}
+
+// MARK: - TextInputOverlay
+
+/// Transparent field overlay that owns hover state for cursor + Skia re-render signal.
+private struct TextInputOverlay: SwiftUI.View {
+    let frame: Rect
+    let binding: GPUIBinding<String>
+    let placeholder: String
+    let secure: Bool
+    let leadingInset: CGFloat
+    @State private var isHovered = false
+
+    var body: some SwiftUI.View {
+        ZStack {
+            if isHovered {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(SwiftGPUI.Color.border.swiftUIColor.opacity(0.5), lineWidth: 1)
+            }
+            Group {
+                if secure {
+                    SecureField(placeholder, text: SwiftUI.Binding(
+                        get: { binding.value }, set: { binding.setValue($0) }
+                    ))
+                } else {
+                    TextField(placeholder, text: SwiftUI.Binding(
+                        get: { binding.value }, set: { binding.setValue($0) }
+                    ))
+                }
+            }
+            .textFieldStyle(.plain)
+            .foregroundColor(.white)
+            .background(.clear)
+            .padding(.leading, leadingInset)
+            .padding(.trailing, 12)
+        }
+        .frame(width: CGFloat(frame.width), height: CGFloat(frame.height))
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering { NSCursor.iBeam.push() } else { NSCursor.pop() }
+        }
+    }
+}
+
+// MARK: - SelectOverlay
+
+/// Popover-based select overlay — avoids Menu chrome bleeding over the Skia shell.
+private struct SelectOverlay: SwiftUI.View {
+    let frame: Rect
+    let options: [String]
+    let selectedIndex: Int
+    let onSelect: (Int) -> Void
+    @State private var isPresented = false
+
+    var body: some SwiftUI.View {
+        SwiftUI.Color.clear
+            .frame(width: CGFloat(frame.width), height: CGFloat(frame.height))
+            .contentShape(Rectangle())
+            .onTapGesture { isPresented = true }
+            .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(options.enumerated()), id: \.offset) { i, opt in
+                        Button {
+                            onSelect(i)
+                            isPresented = false
+                        } label: {
+                            HStack {
+                                SwiftUI.Text(opt)
+                                    .foregroundColor(i == selectedIndex ? .accentColor : .primary)
+                                Spacer()
+                                if i == selectedIndex {
+                                    Image(systemName: "checkmark")
+                                        .foregroundColor(.accentColor)
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        if i < options.count - 1 {
+                            Divider()
+                        }
+                    }
+                }
+                .frame(minWidth: CGFloat(frame.width))
+                .padding(.vertical, 4)
+            }
+    }
+}
+
+// MARK: - DatePickOverlay
+
+/// Transparent tap area that presents a graphical date picker in a popover.
+private struct DatePickOverlay: SwiftUI.View {
+    let frame: Rect
+    let get: () -> Date
+    let set: (Date) -> Void
+    @State private var isPresented = false
+
+    var body: some SwiftUI.View {
+        SwiftUI.Color.clear
+            .frame(width: CGFloat(frame.width), height: CGFloat(frame.height))
+            .contentShape(Rectangle())
+            .onTapGesture { isPresented = true }
+            .popover(isPresented: $isPresented) {
+                SwiftUI.DatePicker(
+                    "",
+                    selection: SwiftUI.Binding(get: get, set: set),
+                    displayedComponents: .date
+                )
+                .datePickerStyle(.graphical)
+                .labelsHidden()
+                .padding()
             }
     }
 }

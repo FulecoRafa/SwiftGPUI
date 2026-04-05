@@ -152,6 +152,24 @@ public indirect enum RenderCommand: Sendable {
     /// Botão com fundo colorido e label.
     case button(label: String, fill: Color, labelColor: Color)
 
+    /// Caixa de seleção (checkbox) com label opcional.
+    case checkbox(checked: Bool, label: String?)
+
+    /// Botão de rádio com label.
+    case radio(selected: Bool, label: String)
+
+    /// Campo de seleção — mostra valor atual + chevron.
+    case select(label: String?, displayValue: String, placeholder: String)
+
+    /// Seletor de data — mostra data formatada.
+    case datePicker(label: String?, displayValue: String)
+
+    /// Área de texto multi-linha (shell apenas; overlay TextEditor captura input).
+    case textArea(placeholder: String, label: String?, value: String)
+
+    /// Campo de busca com ícone de lupa.
+    case searchBox(placeholder: String, value: String)
+
     /// Clipa o conteúdo ao rect antes de desenhar.
     case clipped(RenderCommand, to: Rect)
 

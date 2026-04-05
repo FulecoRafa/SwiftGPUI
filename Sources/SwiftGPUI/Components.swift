@@ -2,6 +2,7 @@
 // Re-exporta os módulos internos e define os componentes de alto nível
 // que o usuário escreve (Card, Input, Flex, Button…).
 
+import Foundation
 @_exported import GPUIDraw
 @_exported import GPUILayout
 @_exported import GPUIInterpret
@@ -103,7 +104,11 @@ public struct Input: View {
                 focused: false
             ),
             interaction: binding.map {
-                .textInput(binding: $0, placeholder: placeholder.isEmpty ? (label ?? "") : placeholder)
+                .textInput(
+                    binding: $0,
+                    placeholder: placeholder.isEmpty ? (label ?? "") : placeholder,
+                    secure: style == .password
+                )
             }
         )
     }
@@ -203,6 +208,209 @@ public struct Button: View {
             frame: frame,
             renderCommand: .button(label: label, fill: fillColor, labelColor: labelColor),
             interaction: action.map { .tap($0) }
+        )
+    }
+}
+
+// MARK: - Checkbox
+
+public struct Checkbox: View {
+    private let label: String
+    private let binding: GPUIBinding<Bool>
+
+    public init(_ label: String, binding: GPUIBinding<Bool>) {
+        self.label = label
+        self.binding = binding
+    }
+
+    public func layout(node: YogaNode, constraint: LayoutConstraint) -> LayoutNode {
+        node.setHeight(36)
+        let frame = Rect(x: 0, y: 0, width: constraint.available.width, height: 36)
+        return LayoutNode(
+            frame: frame,
+            renderCommand: .checkbox(checked: binding.value, label: label),
+            interaction: .tap { self.binding.setValue(!self.binding.value) }
+        )
+    }
+}
+
+// MARK: - RadioGroup
+
+public struct RadioGroup<T: Hashable & Sendable>: View {
+    private let options: [(label: String, value: T)]
+    private let binding: GPUIBinding<T>
+
+    public init(options: [(label: String, value: T)], binding: GPUIBinding<T>) {
+        self.options = options
+        self.binding = binding
+    }
+
+    public func layout(node: YogaNode, constraint: LayoutConstraint) -> LayoutNode {
+        node.setFlexDirection(.column)
+        node.setGap(8)
+
+        let childNodes: [LayoutNode] = options.map { opt in
+            let childYoga = YogaNode()
+            node.addChild(childYoga)
+            let isSelected = opt.value == binding.value
+            let optView = _RadioOption(label: opt.label, selected: isSelected) {
+                self.binding.setValue(opt.value)
+            }
+            return optView.layout(node: childYoga, constraint: constraint)
+        }
+
+        let frames = node.calculateLayout(constraint: constraint)
+        let frame = frames.first ?? .zero
+
+        let positioned: [LayoutNode] = childNodes.enumerated().map { i, childNode in
+            guard i + 1 < frames.count else { return childNode }
+            let target = frames[i + 1]
+            return childNode.offsetted(x: target.x - childNode.frame.x,
+                                       y: target.y - childNode.frame.y)
+        }
+
+        return LayoutNode(frame: frame, renderCommand: .group([]), children: positioned)
+    }
+}
+
+private struct _RadioOption: View {
+    let label: String
+    let selected: Bool
+    let onSelect: () -> Void
+
+    func layout(node: YogaNode, constraint: LayoutConstraint) -> LayoutNode {
+        node.setHeight(32)
+        let frame = Rect(x: 0, y: 0, width: constraint.available.width, height: 32)
+        return LayoutNode(
+            frame: frame,
+            renderCommand: .radio(selected: selected, label: label),
+            interaction: .tap(onSelect)
+        )
+    }
+}
+
+// MARK: - Select
+
+public struct Select<T: Hashable & Sendable>: View {
+    private let label: String?
+    private let options: [(label: String, value: T)]
+    private let binding: GPUIBinding<T>
+
+    public init(
+        label: String? = nil,
+        options: [(label: String, value: T)],
+        binding: GPUIBinding<T>
+    ) {
+        self.label = label
+        self.options = options
+        self.binding = binding
+    }
+
+    public func layout(node: YogaNode, constraint: LayoutConstraint) -> LayoutNode {
+        node.setHeight(52)
+        let frame = Rect(x: 0, y: 0, width: constraint.available.width, height: 52)
+        let displayValue = options.first { $0.value == binding.value }?.label ?? ""
+        let optionLabels = options.map { $0.label }
+        let selectedIndex = options.firstIndex { $0.value == binding.value } ?? 0
+
+        return LayoutNode(
+            frame: frame,
+            renderCommand: .select(
+                label: label,
+                displayValue: displayValue,
+                placeholder: label ?? "Select…"
+            ),
+            interaction: .selectPick(
+                options: optionLabels,
+                selectedIndex: selectedIndex,
+                onSelect: { [self] idx in
+                    guard idx < self.options.count else { return }
+                    self.binding.setValue(self.options[idx].value)
+                }
+            )
+        )
+    }
+}
+
+// MARK: - DatePicker
+
+public struct DatePicker: View {
+    private let label: String?
+    private let binding: GPUIBinding<Date>
+
+    public init(label: String? = nil, binding: GPUIBinding<Date>) {
+        self.label = label
+        self.binding = binding
+    }
+
+    public func layout(node: YogaNode, constraint: LayoutConstraint) -> LayoutNode {
+        node.setHeight(52)
+        let frame = Rect(x: 0, y: 0, width: constraint.available.width, height: 52)
+
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        let displayValue = formatter.string(from: binding.value)
+
+        return LayoutNode(
+            frame: frame,
+            renderCommand: .datePicker(label: label, displayValue: displayValue),
+            interaction: .datePick(
+                get: { [self] in self.binding.value },
+                set: { [self] in self.binding.setValue($0) }
+            )
+        )
+    }
+}
+
+// MARK: - TextArea
+
+public struct TextArea: View {
+    private let label: String?
+    private let binding: GPUIBinding<String>
+    private let lines: Int
+
+    public init(label: String? = nil, lines: Int = 4, binding: GPUIBinding<String>) {
+        self.label = label
+        self.lines = lines
+        self.binding = binding
+    }
+
+    public func layout(node: YogaNode, constraint: LayoutConstraint) -> LayoutNode {
+        let height = Float(lines) * 22 + 20
+        node.setHeight(height)
+        let frame = Rect(x: 0, y: 0, width: constraint.available.width, height: height)
+
+        return LayoutNode(
+            frame: frame,
+            renderCommand: .textArea(
+                placeholder: label ?? "",
+                label: label,
+                value: binding.value
+            ),
+            interaction: .textArea(binding: binding, placeholder: label ?? "")
+        )
+    }
+}
+
+// MARK: - SearchBox
+
+public struct SearchBox: View {
+    private let placeholder: String
+    private let binding: GPUIBinding<String>
+
+    public init(placeholder: String = "Search…", binding: GPUIBinding<String>) {
+        self.placeholder = placeholder
+        self.binding = binding
+    }
+
+    public func layout(node: YogaNode, constraint: LayoutConstraint) -> LayoutNode {
+        node.setHeight(44)
+        let frame = Rect(x: 0, y: 0, width: constraint.available.width, height: 44)
+
+        return LayoutNode(
+            frame: frame,
+            renderCommand: .searchBox(placeholder: placeholder, value: binding.value),
+            interaction: .textInput(binding: binding, placeholder: placeholder, leadingInset: 34)
         )
     }
 }
